@@ -3325,8 +3325,6 @@ _BUILTIN_ADAPTERS: dict[Platform, tuple[str, str, str, str]] = {
                        "Webhook: aiohttp not installed"),
     Platform.MSGRAPH_WEBHOOK: ("msgraph_webhook", "MSGraphWebhookAdapter", "check_msgraph_webhook_requirements",
                                "MSGraph webhook: aiohttp not installed"),
-    Platform.QQBOT: ("qqbot", "QQAdapter", "check_qq_requirements",
-                     "QQBot: aiohttp/httpx missing or QQ_APP_ID/QQ_CLIENT_SECRET not configured"),
     Platform.YUANBAO: ("yuanbao", "YuanbaoAdapter", "WEBSOCKETS_AVAILABLE",
                        "Yuanbao: websockets not installed. Run: pip install websockets")}
 

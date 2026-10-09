@@ -4659,7 +4659,6 @@ from hermes_cli.gateway_setup_wizard import (
     _clean_discord_ids,
     _prompt_allowlist_var,
     _setup_standard_platform,
-    _setup_qqbot,
     _builtin_setup_fn,
     _configure_platform,
     _wizard_offer_service_action,
