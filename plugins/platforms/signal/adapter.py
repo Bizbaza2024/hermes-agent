@@ -39,7 +39,7 @@ from plugins.platforms.signal.signal_rate_limit import (
     SIGNAL_BATCH_PACING_NOTICE_THRESHOLD, SIGNAL_MAX_ATTACHMENTS_PER_MSG, SIGNAL_RATE_LIMIT_MAX_ATTEMPTS,
     SignalRateLimitError, _extract_retry_after_seconds, _format_wait, _is_signal_rate_limit_error,
     _signal_send_timeout, get_scheduler)
-from gateway.platforms._shared import get_scoped_secret as _sig_secret
+from gateway.platforms._shared import env_is_connected, get_scoped_secret as _sig_secret
 from utils import TRUTHY_STRINGS
 
 logger = logging.getLogger(__name__)
@@ -171,6 +171,16 @@ def validate_signal_config(config: PlatformConfig) -> bool:
     http_url = (extra.get("http_url", "") or _sig_secret("SIGNAL_HTTP_URL", "")).strip()
     account = (extra.get("account", "") or _sig_secret("SIGNAL_ACCOUNT", "")).strip()
     return bool(http_url and account)
+
+
+_env_configured = env_is_connected("SIGNAL_HTTP_URL", "SIGNAL_ACCOUNT")
+
+
+def _is_connected(config: PlatformConfig) -> bool:
+    """URL + account from config/scoped env, else ``.env``: a plain CLI process never loads ``.env``
+    into the environment, and the old static setup row read it, so a ``.env``-only profile stays
+    "configured" in ``hermes gateway setup``."""
+    return validate_signal_config(config) or _env_configured(config)
 
 
 class SignalAdapter(BasePlatformAdapter):
@@ -1006,7 +1016,7 @@ def register(ctx) -> None:
     ctx.register_platform(
         name="signal", label="Signal", adapter_factory=SignalAdapter,
         check_fn=check_signal_requirements, validate_config=_validate_config,
-        is_connected=validate_signal_config, required_env=["SIGNAL_HTTP_URL", "SIGNAL_ACCOUNT"],
+        is_connected=_is_connected, required_env=["SIGNAL_HTTP_URL", "SIGNAL_ACCOUNT"],
         install_hint="Signal: runtime requirements not met", setup_fn=_interactive_setup,
         allowed_users_env="SIGNAL_ALLOWED_USERS", allow_all_env="SIGNAL_ALLOW_ALL_USERS",
         cron_deliver_env_var="SIGNAL_HOME_CHANNEL",
