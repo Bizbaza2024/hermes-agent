@@ -19,6 +19,8 @@ from hermes_constants import get_hermes_home
 from hermes_state_runtime import list_session_admissions
 from plugins.platforms.discord.adapter import DiscordAdapter
 
+_REAL_SCHEDULE = SessionAuthority._schedule  # the fixture parks scheduling; races restore it
+
 
 @pytest_asyncio.fixture
 async def native(monkeypatch):
@@ -149,3 +151,58 @@ async def test_exhaustion_reset_is_ordered_with_redelivery_and_cleanup(native, m
     new_rows = list_session_admissions(db, session_id=new, pending_only=False)
     assert [(r["request_id"], r["admission_id"], r["status"]) for r in new_rows] == [
         ("B", admitted[1][1].admission_id, "terminal"), ("C", admitted[2][1].admission_id, "terminal")]
+
+
+@pytest.mark.asyncio
+async def test_no_scheduler_starts_the_fresh_fifo_before_reset_cleanup_finishes(native, monkeypatch):
+    """With the real scheduler, a redelivery of B while the topic binding sync is still running
+    (it schedules the fresh FIFO itself) must not start B there before the reset finishes."""
+    import threading
+    from gateway.session_results import execution_result
+    runner, authority = native.runner, native.authority
+    loop = asyncio.get_running_loop()
+    admitted = [await _admit(native, text) for text in ("A", "B", "C")]
+    old = admitted[0][1].ref
+    events, executed, entered, release = [], [], asyncio.Event(), threading.Event()
+
+    def held_sync(*args, **kwargs):
+        events.append("sync:entered")
+        loop.call_soon_threadsafe(entered.set)
+        assert release.wait(10)
+        events.append("sync:done")
+
+    monkeypatch.setattr(runner, "_sync_telegram_topic_binding", held_sync)
+
+    async def turn(event, source, session_key, run_generation):
+        entry = runner.session_store.lookup_by_session_key(session_key)
+        executed.append((event.text, entry.session_id))
+        events.append("turn:" + event.text)
+        captured = execution_result.get()
+        if event.text == "A":
+            result = {"failed": True, "compression_exhausted": True, "messages": []}
+            captured["result"] = result
+            # Production's turn cleanup releases the running slot before the reset runs.
+            runner._release_running_agent_state(session_key, run_generation=run_generation)
+            await runner._hmwa_compression_exhaustion_reset(result, "context exhausted", entry, session_key, source)
+        else:
+            captured["result"] = {"final_response": "reply", "messages": []}
+        return "reply"
+
+    monkeypatch.setattr(runner, "_handle_message_with_agent", turn)
+    monkeypatch.setattr(SessionAuthority, "_schedule", _REAL_SCHEDULE)
+    authority._schedule(old)
+    await asyncio.wait_for(entered.wait(), 10)
+    _, retry = await _admit(native, "B", admitted[1][0])  # dedupes, then schedules its FIFO
+    assert retry.admission_id == admitted[1][1].admission_id
+    for _ in range(25):
+        await asyncio.sleep(0.02)
+    assert [t for t, _ in executed] == ["A"]  # nothing ran on the fresh session during the sync
+    release.set()
+    for _ in range(300):
+        if len(executed) == 3:
+            break
+        await asyncio.sleep(0.02)
+    new = runner.session_store.lookup_by_session_key(authority.sessions[old.session_id].route).session_id
+    assert executed == [("A", old.session_id), ("B", new), ("C", new)]
+    assert events.index("sync:done") < events.index("turn:B")
+

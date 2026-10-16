@@ -298,23 +298,25 @@ async def move_route_wakes(runner, session_key, old_session_id):
 
 async def reset_and_rehome_messages(runner, session_key, old_session_id):
     """The compression-exhaustion auto-reset: rotate the route to a fresh session and move the old
-    owner's still-queued native ``messaging:*`` rows onto it in one transaction, same order and
-    request ids. Left behind they pause the old FIFO (``admission_conflict``) and never run, while a
-    later message runs ahead of them. /new and /stop cancel these rows instead (the user asked for a
-    clean break); the exhausted turn itself is started, so it is never moved.
+    owner's still-queued native ``messaging:*`` rows onto it, same order and request ids. Left
+    behind they pause the old FIFO (``admission_conflict``) and never run, while a later message
+    runs ahead of them. /new and /stop cancel these rows instead (the user asked for a clean break);
+    the exhausted turn itself is started, so it is never moved.
 
-    The rotation and the move are one write ordered with native admissions: a redelivery that
-    resolves the route to the fresh session commits after the move and dedupes onto the moved row
-    (committed first, it would collide with it and roll the whole move back). Returns
-    ``(entry, schedule)``: the caller runs ``schedule()`` once its conversation cleanup and topic
-    binding sync are done, so a moved message never starts a turn against stale state."""
+    The rotation (sessions.json) and the move (one SQLite transaction) run in one worker step
+    ordered with native admissions, not atomically across the two stores: a redelivery that
+    resolves the route to the fresh session commits after the move and dedupes onto the moved row.
+    Returns ``(entry, release)``. Until the caller runs ``release()``
+    (once, after its conversation cleanup and topic binding sync, also on failure) the fresh
+    session's ``claim_gate`` is held, so no scheduler (a redelivery, a moved route wake, this
+    move) starts a turn there against stale state; ``release()`` then schedules its FIFO."""
     from gateway.session_authorities import active_authority
     authority = active_authority(runner)
     old = SessionRef(authority.profile_id, authority.logical_owner(old_session_id)) if authority else None
     live = authority.sessions.get(old.session_id) if old and old_session_id else None
     if live is None:
         return await runner.async_session_store.reset_session(session_key), lambda: None
-    from functools import partial
+    import asyncio
     from gateway.session_authority import LiveSession
     from gateway.session_runtime_workers import tracked_write
     from hermes_state_runtime import rehome_queued_inputs
@@ -332,14 +334,43 @@ async def reset_and_rehome_messages(runner, session_key, old_session_id):
             authority.db, epoch=authority.epoch, old_session_id=old.session_id,
             new_session_id=new.session_id, principal_prefix='messaging:')
 
+    async def fence(result):
+        # In the write's own task step, before any later ordered admission schedules the fresh FIFO.
+        new = result[1]
+        if new is None:
+            return result, None
+        fresh = authority.sessions.setdefault(new.session_id, LiveSession(live.source, session_key))
+        await fresh.claim_gate.acquire()
+        return result, fresh
+
     async with live.mutation_lock:
-        entry, new, moved = await tracked_write(authority, rotate_and_move, ordered=True)
-    if not moved:
+        write = asyncio.ensure_future(tracked_write(authority, rotate_and_move, fence, ordered=True))
+        try:
+            (entry, new, moved), fresh = await asyncio.shield(write)
+        except asyncio.CancelledError:
+            # The rotation still commits and takes the fence: lift it, or the fresh FIFO never runs.
+            def lift(done):
+                gate = None if done.cancelled() or done.exception() else done.result()[1]
+                if gate is not None:
+                    gate.claim_gate.release()
+                    authority._schedule(done.result()[0][1])
+            write.add_done_callback(lift)
+            raise
+    if fresh is None:
         return entry, lambda: None
-    authority.sessions.setdefault(new.session_id, LiveSession(live.source, session_key))
-    authority._publish_pending(old)
-    authority._publish_pending(new)
-    return entry, partial(authority._schedule, new)
+    if moved:
+        authority._publish_pending(old)
+        authority._publish_pending(new)
+
+    released = []
+
+    def release():  # once: a second call must not lift a claim the drain took meanwhile
+        if not released:
+            released.append(True)
+            fresh.claim_gate.release()
+            if authority.sessions.get(new.session_id) is fresh:
+                authority._schedule(new)
+    return entry, release
 
 
 async def admit_route_wake(runner, adapter, source, text, producer, metadata=None):

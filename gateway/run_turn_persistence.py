@@ -323,28 +323,31 @@ class GatewayTurnPersistenceMixin:
             logger.info("Auto-resetting session %s after compression exhaustion.", session_entry.session_id)
             from gateway.session_automation import move_route_wakes, reset_and_rehome_messages
             # Messages queued behind the exhausted turn still run, on the fresh session (unlike /new).
-            new_entry, run_moved = await reset_and_rehome_messages(self, session_key, session_entry.session_id)
-            await move_route_wakes(self, session_key, session_entry.session_id)
-            self._evict_cached_agent(session_key)
-            # Conversation boundary: the funnel clears every conversation-scoped per-session dict.
-            self._clear_conversation_scope(session_key, reason="compression_exhausted_reset")
-            if new_entry is not None:
-                # Re-point the Telegram topic binding at the fresh session, or the binding-heal walk
-                # switches the next message back onto the bloated child and re-triggers exhaustion
-                # forever. No-op on non-topic lanes.
-                # Compression rotated session_entry.session_id to the oversized compressed child earlier
-                # this turn (the agent-result sync above), and that _sync also rewrote the (chat_id,
-                # thread_id) -> bloated-child binding. reset_session swaps in a clean, parentless session,
-                # but without re-syncing the binding the next inbound message in this topic gets
-                # switch_session'd back onto the bloated child by the binding-heal walk, reloads the
-                # oversized transcript, and re-triggers compression exhaustion forever (#35809 — regression
-                # of the #9893/#10063 auto-reset).
-                session_entry = new_entry
-                await asyncio.to_thread(
-                    self._sync_telegram_topic_binding, source, session_entry, reason="compression-exhausted-reset",
-                )
-            # Only now may the moved messages start: after eviction, scope clear and binding sync.
-            run_moved()
+            new_entry, release_fresh = await reset_and_rehome_messages(self, session_key, session_entry.session_id)
+            try:
+                await move_route_wakes(self, session_key, session_entry.session_id)
+                self._evict_cached_agent(session_key)
+                # Conversation boundary: the funnel clears every conversation-scoped per-session dict.
+                self._clear_conversation_scope(session_key, reason="compression_exhausted_reset")
+                if new_entry is not None:
+                    # Re-point the Telegram topic binding at the fresh session, or the binding-heal walk
+                    # switches the next message back onto the bloated child and re-triggers exhaustion
+                    # forever. No-op on non-topic lanes.
+                    # Compression rotated session_entry.session_id to the oversized compressed child earlier
+                    # this turn (the agent-result sync above), and that _sync also rewrote the (chat_id,
+                    # thread_id) -> bloated-child binding. reset_session swaps in a clean, parentless session,
+                    # but without re-syncing the binding the next inbound message in this topic gets
+                    # switch_session'd back onto the bloated child by the binding-heal walk, reloads the
+                    # oversized transcript, and re-triggers compression exhaustion forever (#35809 — regression
+                    # of the #9893/#10063 auto-reset).
+                    session_entry = new_entry
+                    await asyncio.to_thread(
+                        self._sync_telegram_topic_binding, source, session_entry, reason="compression-exhausted-reset",
+                    )
+            finally:
+                # Only now may the fresh session's FIFO claim (it is fenced until here, against every
+                # scheduler): after eviction, scope clear and binding sync.
+                release_fresh()
             response = (response or "") + t("gateway.session.auto_reset_context_exhausted")
         return response, session_entry
 
