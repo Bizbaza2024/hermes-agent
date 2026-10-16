@@ -145,14 +145,19 @@ def test_a_failed_redial_is_retried_even_while_its_loop_thread_is_still_exiting(
     conn._run = run_then_linger
     with pytest.raises(GatewayClientError, match="Gateway starting"):
         conn.call("status")
-    assert conn._thread.is_alive()
-    timer = threading.Timer(0.2, released.set)
-    timer.start()
+    old = conn._thread
+    assert old.is_alive()
+    join = old.join
+
+    def release_then_join(timeout=None):  # only the fixed path joins the exiting thread
+        released.set()
+        join(timeout)
+
+    old.join = release_then_join
     try:
         assert conn.call("status") == {"status": "ok", "life": 2}
     finally:
         released.set()
-        timer.cancel()
 
 
 def test_a_first_connect_failure_is_still_final(gateway):
