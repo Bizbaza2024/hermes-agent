@@ -247,7 +247,7 @@ def test_fs_download_streams_ssh_files_without_preview_cap(client, monkeypatch):
 
     response = client.get(
         "/api/fs/download",
-        params={"path": "/srv/repos/project/report.txt", "profile": "remote-dev"},
+        params={"path": "/srv/repos/report.txt", "profile": "remote-dev"},
     )
 
     assert response.status_code == 200
