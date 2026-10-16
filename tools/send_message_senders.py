@@ -595,28 +595,6 @@ async def _send_weixin(pconfig, chat_id, message, media_files=None):
         return _error(f"Weixin send failed: {e}")
 
 
-async def _send_bluebubbles(extra, chat_id, message):
-    """Send via BlueBubbles iMessage server using the adapter's REST API."""
-    bb, err = _gateway_platform_module("bluebubbles", unavailable="BlueBubbles adapter not available.",
-                                       unmet="BlueBubbles requirements not met (need aiohttp + httpx).")
-    if err:
-        return err
-    try:
-        from gateway.config import PlatformConfig
-        adapter = bb.BlueBubblesAdapter(PlatformConfig(extra=extra))
-        if not await adapter.connect():
-            return _error("BlueBubbles: failed to connect to server")
-        try:
-            result = await adapter.send(chat_id, message)
-        finally:
-            await adapter.disconnect()
-        if not result.success:
-            return _error(f"BlueBubbles send failed: {result.error}")
-        return _success("bluebubbles", chat_id, message_id=result.message_id)
-    except Exception as e:
-        return _error(f"BlueBubbles send failed: {e}")
-
-
 def _qqbot_media_file_type(media_path: str, is_voice: bool) -> int:
     """Map a local path / voice flag to QQ Bot ``file_type`` constants."""
     from gateway.platforms.qqbot.constants import (

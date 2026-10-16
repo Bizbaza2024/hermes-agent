@@ -17,7 +17,7 @@ from tools.send_message_targets import (
 from tools.send_message_senders import (
     _AUDIO_EXTS, _DEFAULT_CAPTION_LIMIT, _IMAGE_EXTS, _NO_DELIVERABLE, _VIDEO_EXTS, _VOICE_EXTS,
     _adapter_media_method, _error, _live_adapter, _media_caption_split, _plugin_standalone_sender,
-    _registry_standalone_send, _resolve_slack_user_target, _sanitize_error_text, _send_bluebubbles,
+    _registry_standalone_send, _resolve_slack_user_target, _sanitize_error_text,
     _send_matrix_via_adapter, _send_qqbot, _send_signal, _send_telegram, _send_weixin, _send_yuanbao)
 from tools.registry import tool_error
 
@@ -679,7 +679,6 @@ _TEXT_SENDERS = {
     **{name: partial(_registry_standalone_send, name)
        for name in ("whatsapp", "email", "sms", "dingtalk", "feishu", "wecom")},
     "signal": lambda pc, cid, chunk, tid: _send_signal(pc.extra, cid, chunk),
-    "bluebubbles": lambda pc, cid, chunk, tid: _send_bluebubbles(pc.extra, cid, chunk),
     "qqbot": lambda pc, cid, chunk, tid: _send_qqbot(pc, cid, chunk),
     "yuanbao": lambda pc, cid, chunk, tid: _send_yuanbao(cid, chunk)}
 
