@@ -130,6 +130,31 @@ def test_a_failed_redial_is_retried_on_the_next_call(gateway, conn):
     assert conn.call("status") == {"status": "ok", "life": 2}
 
 
+def test_a_failed_redial_is_retried_even_while_its_loop_thread_is_still_exiting(gateway, conn):
+    """The failed dial's loop thread reports ready before it returns; the next call must not read
+    that still-alive thread as a dial in progress and re-raise its stale error."""
+    gateway.hang_up(conn)
+    gateway.refusals = 1
+    released = threading.Event()
+    run = conn._run
+
+    def run_then_linger():
+        run()
+        released.wait(5)  # still alive after ``_ready.set()``, as on a loaded runner
+
+    conn._run = run_then_linger
+    with pytest.raises(GatewayClientError, match="Gateway starting"):
+        conn.call("status")
+    assert conn._thread.is_alive()
+    timer = threading.Timer(0.2, released.set)
+    timer.start()
+    try:
+        assert conn.call("status") == {"status": "ok", "life": 2}
+    finally:
+        released.set()
+        timer.cancel()
+
+
 def test_a_first_connect_failure_is_still_final(gateway):
     gateway.refusals = 2
     connection = GatewayConnection(connect=gateway.dial)
