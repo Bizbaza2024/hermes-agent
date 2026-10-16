@@ -33,7 +33,7 @@ def _hosts():
     from plugins.platforms.weixin.adapter import WeixinAdapter
     from plugins.platforms.whatsapp_cloud.adapter import WhatsAppCloudAdapter
     from gateway.platforms.whatsapp_common import WhatsAppBehaviorMixin
-    from gateway.platforms.yuanbao import AccessPolicy
+    from plugins.platforms.yuanbao.adapter import AccessPolicy
     from plugins.platforms.wecom.adapter import WeComAdapter
 
     hosts = {
