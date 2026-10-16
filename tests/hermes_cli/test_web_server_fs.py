@@ -441,7 +441,7 @@ def test_fs_reads_translate_after_binding_profile_terminal_scope(client, tmp_pat
 
     from tools.terminal_scope import get_terminal_scope
 
-    def translate(path):
+    def translate(path, session_key="", *, quiet=False):
         if path == Path("/workspace/isolated report.txt") and get_terminal_scope() is not None:
             return target
         return None
@@ -505,6 +505,7 @@ def test_fs_download_maps_root_home_to_persistent_sandbox(client, monkeypatch, t
     assert response.content == b"PK\x03\x04zip"
 
 
+@pytest.mark.platforms("windows")
 def test_agent_fs_path_translates_before_host_normalization(monkeypatch, tmp_path):
     """On a Windows gateway ``_fs_path("/workspace/x")`` anchors to the current
     drive (``D:\\workspace\\x``) and could serve an unrelated host file; the
@@ -514,10 +515,11 @@ def test_agent_fs_path_translates_before_host_normalization(monkeypatch, tmp_pat
     mapped = tmp_path / "x.txt"
     seen = []
 
-    def translate(candidate, session_key=""):
+    def translate(candidate, session_key="", *, quiet=False):
         seen.append(candidate.as_posix())
         return mapped
 
+    monkeypatch.setenv("TERMINAL_ENV", "docker")
     monkeypatch.setattr("gateway.platforms.base._translate_docker_container_media_path", translate)
 
     def boom(*_a, **_k):
@@ -527,6 +529,107 @@ def test_agent_fs_path_translates_before_host_normalization(monkeypatch, tmp_pat
 
     assert web_server_files._agent_fs_path("/workspace/x.txt") == mapped
     assert seen == ["/workspace/x.txt"]
+
+
+@pytest.mark.platforms("windows")
+def test_agent_fs_path_unmapped_container_path_404s_on_windows(monkeypatch):
+    """A container path that misses translation must not fall back to the drive."""
+    from fastapi import HTTPException
+
+    from hermes_cli import web_server_files
+
+    monkeypatch.setenv("TERMINAL_ENV", "docker")
+    monkeypatch.setenv("TERMINAL_CONTAINER_PERSISTENT", "false")
+    monkeypatch.delenv("TERMINAL_DOCKER_VOLUMES", raising=False)
+
+    def boom(*_a, **_k):
+        raise AssertionError("an unmapped container path must not reach _fs_path")
+
+    monkeypatch.setattr(web_server_files, "_fs_path", boom)
+    with pytest.raises(HTTPException) as exc:
+        web_server_files._agent_fs_path("/workspace/x.txt")
+    assert exc.value.status_code == 404
+    assert "agent sandbox" in exc.value.detail
+
+
+@pytest.mark.platforms("posix")
+def test_readable_host_path_wins_over_root_sandbox(client, monkeypatch, tmp_path):
+    """Host-first on POSIX: a readable host file is served even when the docker
+    sandbox has a file at the same container path."""
+    sandbox = tmp_path / "sandboxes"
+    host_dir = tmp_path / "host"
+    host_dir.mkdir()
+    (host_dir / "f.txt").write_text("HOST", encoding="utf-8")
+    sandbox_ws = tmp_path / "mount"
+    sandbox_ws.mkdir()
+    (sandbox_ws / "f.txt").write_text("SANDBOX", encoding="utf-8")
+    monkeypatch.setenv("TERMINAL_ENV", "docker")
+    monkeypatch.setenv("TERMINAL_SANDBOX_DIR", str(sandbox))
+    monkeypatch.setenv("TERMINAL_DOCKER_VOLUMES", json.dumps([f"{sandbox_ws}:{host_dir}"]))
+
+    response = client.get("/api/fs/read-text", params={"path": str(host_dir / "f.txt")})
+
+    assert response.status_code == 200
+    assert response.json()["text"] == "HOST"
+
+
+def test_local_backend_ignores_leftover_docker_volumes(client, monkeypatch, tmp_path):
+    """terminal.backend=local with docker_volumes still configured: no translation."""
+    real = tmp_path / "real"
+    alt = tmp_path / "alt"
+    real.mkdir()
+    alt.mkdir()
+    (alt / "x.txt").write_text("MOUNTED-COPY", encoding="utf-8")
+    monkeypatch.setenv("TERMINAL_ENV", "local")
+    monkeypatch.setenv("TERMINAL_DOCKER_VOLUMES", json.dumps([f"{alt}:{real}"]))
+
+    response = client.get("/api/fs/read-text", params={"path": str(real / "x.txt")})
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "File not found"
+
+
+def test_fs_download_profile_uses_that_profiles_sandbox(client, monkeypatch, tmp_path):
+    """``profile=work`` must resolve /root/... in the work profile's sandbox, not the
+    active profile's."""
+    from hermes_cli import profiles
+
+    default_home = tmp_path / "default-home"
+    work_home = default_home / "profiles" / "work"
+    for home in (default_home, work_home):
+        home.mkdir(parents=True, exist_ok=True)
+        (home / "config.yaml").write_text(
+            "terminal:\n  backend: docker\n  container_persistent: true\n", encoding="utf-8")
+    monkeypatch.setattr(profiles, "_get_default_hermes_home", lambda: default_home)
+    monkeypatch.setenv("HERMES_HOME", str(default_home))
+    monkeypatch.delenv("TERMINAL_SANDBOX_DIR", raising=False)
+    monkeypatch.delenv("TERMINAL_DOCKER_VOLUMES", raising=False)
+    monkeypatch.setenv("TERMINAL_ENV", "docker")
+    from tools.environments.path_utils import sanitize_task_id_for_path
+
+    (default_home / "sandboxes/docker/default/home").mkdir(parents=True)
+    (default_home / "sandboxes/docker/default/home/f.txt").write_bytes(b"DEFAULT")
+    work_dir = work_home / "sandboxes/docker" / sanitize_task_id_for_path("profile:work") / "home"
+    work_dir.mkdir(parents=True)
+    (work_dir / "f.txt").write_bytes(b"WORK")
+
+    work = client.get("/api/fs/download", params={"path": "/root/f.txt", "profile": "work"})
+    default = client.get("/api/fs/download", params={"path": "/root/f.txt"})
+
+    assert work.status_code == 200, work.text
+    assert work.content == b"WORK"
+    assert default.content == b"DEFAULT"
+
+
+def test_fs_read_plain_host_path_logs_no_docker_media_warning(client, docker_volumes, tmp_path, caplog):
+    """fs routes see ordinary host paths constantly; misses are not MEDIA warnings."""
+    plain = tmp_path / "plain.txt"
+    plain.write_text("x", encoding="utf-8")
+    with caplog.at_level("WARNING", logger="gateway.platforms.base"):
+        client.get("/api/fs/read-text", params={"path": str(plain)})
+        client.get("/api/fs/read-text", params={"path": str(tmp_path / "missing.txt")})
+        client.get("/api/fs/list", params={"path": str(tmp_path)})
+    assert not [r for r in caplog.records if "Docker MEDIA path" in r.getMessage()]
 
 
 def test_agent_fs_path_leaves_host_paths_to_fs_path(monkeypatch, tmp_path):

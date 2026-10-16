@@ -29,8 +29,8 @@ from hermes_cli._subprocess_compat import windows_hide_flags
 from hermes_cli.sqlite_safe_read import LiveConnectionError, offline_file_access
 from hermes_cli.web_deps import late
 from hermes_cli.web_server_files import (
-    _agent_fs_path, _fs_path, _hosted_fs_read_guard, _managed_file_entry,
-    _managed_response_meta, _resolve_managed_path,
+    SANDBOX_NOT_FOUND, _agent_fs_path, _fs_path, _hosted_fs_read_guard, _is_unmapped_container_path,
+    _managed_file_entry, _managed_response_meta, _resolve_managed_path,
 )
 from hermes_cli.web_models import (
     ChatImageUpload, FsWriteText, ManagedDirectoryCreate, ManagedFileDelete, ManagedFileUpload,
@@ -160,18 +160,9 @@ def _io_errors(denied: str, failed: str):
         raise HTTPException(status_code=500, detail=f"{failed}: {exc}")
 
 
-def _fs_docker_active() -> bool:
-    """True when the gateway runs the docker terminal backend (#85238 detail)."""
-    from gateway.platforms.base import _docker_env_active
-
-    return _docker_env_active()
-
-
 def _fs_sandbox_not_found_detail(path: Path) -> str:
     """Distinguish an untranslated agent-sandbox path from a plain missing file."""
-    if _fs_docker_active() and path.as_posix().startswith("/"):
-        return "File not found on the gateway host: the path may live inside the agent sandbox"
-    return "File not found"
+    return SANDBOX_NOT_FOUND if _is_unmapped_container_path(path.as_posix()) else "File not found"
 
 
 def _fs_regular_file(path: Path) -> tuple[Path, os.stat_result]:
@@ -783,7 +774,7 @@ async def fs_list(path: str, request: Request, profile: Optional[str] = None):
             return await asyncio.to_thread(backend.list_dir, path, _FS_READDIR_HIDDEN)
         except Exception as exc:
             _raise_fs_backend_error(exc)
-    target = _agent_fs_path(path)
+    target = _agent_fs_path(path, profile_home=_fs_profile_home(profile))
     _hosted_fs_read_guard(target, request)
     try:
         entries = []
@@ -828,7 +819,7 @@ async def fs_read_text(path: str, request: Request = None, profile: Optional[str
             "text": data.decode("utf-8", errors="replace"),
             "truncated": size > _FS_TEXT_PREVIEW_MAX_BYTES,
         }
-    target = _agent_fs_path(path)
+    target = _agent_fs_path(path, profile_home=_fs_profile_home(profile))
     _hosted_fs_read_guard(target, request)
     target, st = _fs_regular_file(target)
     if st.st_size > _FS_TEXT_SOURCE_MAX_BYTES:
@@ -905,6 +896,8 @@ async def fs_write_text(payload: FsWriteText, profile: Optional[str] = None):
 
 
 async def _fs_download_path(path: str, profile: Optional[str], session_id: Optional[str]) -> Path:
+    # Resolve container paths in the requested profile's sandbox, not the active one's.
+    profile_home = _fs_profile_home(profile)
     if session_id is not None:
         from hermes_cli.web_routers.sessions import get_session_detail
 
@@ -912,12 +905,17 @@ async def _fs_download_path(path: str, profile: Optional[str], session_id: Optio
             raise HTTPException(status_code=404, detail="Session not found")
         session = await get_session_detail(session_id, profile)
         # Validate ownership even for absolute paths; never trust a client cwd.
-        return _agent_fs_path(path, cwd=session.get("cwd") or "")
-    if profile is not None:
-        from hermes_cli.web_server_cron import _cron_profile_home
+        return _agent_fs_path(path, cwd=session.get("cwd") or "", profile_home=profile_home)
+    return _agent_fs_path(path, profile_home=profile_home)
 
-        _cron_profile_home(profile)
-    return _agent_fs_path(path)
+
+def _fs_profile_home(profile: Optional[str]) -> Optional[Path]:
+    """HERMES_HOME of a requested profile (404/400 on an unknown one), None for the active one."""
+    if profile is None:
+        return None
+    from hermes_cli.web_server_cron import _cron_profile_home
+
+    return _cron_profile_home(profile)[1]
 
 
 @router.get("/api/fs/read-data-url")

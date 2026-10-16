@@ -1068,13 +1068,14 @@ def _cache_dir_container_mounts() -> list[tuple[Path, Path]]:
         return []
 
 
-def _warn_unresolved_docker_media(candidate: Path, session_key: str, reason: str) -> None:
+def _warn_unresolved_docker_media(candidate: Path, session_key: str, reason: str, quiet: bool = False) -> None:
     """Name WHY a container-absolute MEDIA path failed translation (otherwise the only signal is
-    the generic "Skipping unsafe MEDIA directive path" line). Docker-only; host rejections quiet.
+    the generic "Skipping unsafe MEDIA directive path" line). Docker-only; host rejections and ``quiet``
+    callers (fs routes, which also see ordinary host paths) stay silent.
 
     See #93950.
     """
-    if not _docker_env_active():
+    if quiet or not _docker_env_active():
         return
     logger.warning("Docker MEDIA path %s did not resolve to a host sandbox file (%s%s); "
                    "the producing container's sandbox directory may not exist yet or "
@@ -1082,7 +1083,7 @@ def _warn_unresolved_docker_media(candidate: Path, session_key: str, reason: str
                    f", session_key={session_key}" if session_key else "")
 
 
-def _translate_docker_container_media_path(candidate: Path, session_key: str = "") -> Optional[Path]:
+def _translate_docker_container_media_path(candidate: Path, session_key: str = "", *, quiet: bool = False) -> Optional[Path]:
     """Container-absolute path -> host path via longest-prefix match over ``docker_volumes``, the
     auto-mounted cache dirs (``/root/.hermes/...``), persistent ``/workspace`` and ``/root``."""
     if not candidate.as_posix().startswith("/"):  # POSIX even on Windows gateways (not is_absolute)
@@ -1104,7 +1105,7 @@ def _translate_docker_container_media_path(candidate: Path, session_key: str = "
         mounts.extend(
             (root, Path("/root")) for root in _docker_persistent_sandbox_roots(session_key, "home"))
     if not mounts:
-        _warn_unresolved_docker_media(candidate, session_key, "no sandbox mounts resolved")
+        _warn_unresolved_docker_media(candidate, session_key, "no sandbox mounts resolved", quiet)
         return None
     # Longest container-prefix match; equal-length prefixes are tried in insertion order.
     candidate_posix = candidate.as_posix()
@@ -1112,14 +1113,14 @@ def _translate_docker_container_media_path(candidate: Path, session_key: str = "
                for prefix in (container_root.as_posix().rstrip("/") or "/",)
                if candidate_posix == prefix or candidate_posix.startswith(prefix + "/")]
     if not matched:
-        _warn_unresolved_docker_media(candidate, session_key, "no mounted prefix matches")
+        _warn_unresolved_docker_media(candidate, session_key, "no mounted prefix matches", quiet)
         return None
     for host_root, container_root, _score in sorted(matched, key=lambda m: -m[2]):
         translated = _resolve_path(host_root / candidate.relative_to(container_root), strict=True)
         if translated is not None and (
                 translated == host_root or _path_is_within(translated, host_root)):
             return translated
-    _warn_unresolved_docker_media(candidate, session_key, "host file missing from sandbox")
+    _warn_unresolved_docker_media(candidate, session_key, "host file missing from sandbox", quiet)
     return None
 
 

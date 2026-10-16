@@ -272,6 +272,19 @@ def test_managed_reads_resolve_docker_mount_inside_locked_root(
     assert stream.status_code == 415
 
 
+def test_managed_read_still_refuses_dotdot_in_container_path(forced_files_client, monkeypatch):
+    """``..`` stays refused even when the path would translate inside the mount."""
+    client, root = forced_files_client
+    (root / "sub").mkdir(parents=True, exist_ok=True)
+    (root / "ok.txt").write_text("ok", encoding="utf-8")
+    monkeypatch.setenv("TERMINAL_ENV", "docker")
+    monkeypatch.setenv("TERMINAL_DOCKER_VOLUMES", json.dumps([f"{root}:/workspace"]))
+
+    response = client.get("/api/files/read", params={"path": "/workspace/sub/../ok.txt"})
+
+    assert response.status_code == 400, response.text
+
+
 def test_managed_reads_reject_docker_mount_outside_locked_root(
     forced_files_client, monkeypatch, tmp_path,
 ):
