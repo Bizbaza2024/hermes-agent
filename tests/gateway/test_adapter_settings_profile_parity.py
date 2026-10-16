@@ -70,7 +70,7 @@ _SETTINGS = [
      lambda m: m.FeishuAdapter._load_settings({}).webhook_port),
     ("plugins.platforms.feishu.adapter", "FEISHU_CONNECTION_MODE", "websocket", "webhook",
      lambda m: m.FeishuAdapter._load_settings({}).connection_mode),
-    ("gateway.platforms.bluebubbles", "BLUEBUBBLES_WEBHOOK_PORT", "18010", "18110",
+    ("plugins.platforms.bluebubbles.adapter", "BLUEBUBBLES_WEBHOOK_PORT", "18010", "18110",
      lambda m: m._extra_or_secret({}, "webhook_port", "BLUEBUBBLES_WEBHOOK_PORT", "0")),
     ("gateway.platforms.signal", "SIGNAL_REACTIONS", "true", "false",
      lambda m: _signal_reactions(m)),
