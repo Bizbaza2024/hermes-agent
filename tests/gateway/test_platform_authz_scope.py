@@ -57,7 +57,7 @@ def profile_scope():
     [
         ("gateway.platforms.weixin", "_wx_secret", "WEIXIN_ALLOWED_USERS"),
         ("gateway.platforms.yuanbao", "_yb_secret", "YUANBAO_DM_POLICY"),
-        ("gateway.platforms.signal", "_sig_secret", "SIGNAL_ALLOWED_USERS"),
+        ("plugins.platforms.signal.adapter", "_sig_secret", "SIGNAL_ALLOWED_USERS"),
         ("plugins.platforms.wecom.adapter", "_get_scoped_secret", "WECOM_ALLOWED_USERS"),
     ],
 )
@@ -88,7 +88,7 @@ def multiplex_on(monkeypatch):
     [
         ("gateway.platforms.weixin", "_wx_secret"),
         ("gateway.platforms.yuanbao", "_yb_secret"),
-        ("gateway.platforms.signal", "_sig_secret"),
+        ("plugins.platforms.signal.adapter", "_sig_secret"),
         ("plugins.platforms.wecom.adapter", "_get_scoped_secret"),
     ],
 )
@@ -123,7 +123,7 @@ def test_helper_does_not_leak_default_env_into_scoped_miss(
     [
         ("gateway.platforms.weixin", "_wx_secret", "WEIXIN_ALLOWED_USERS"),
         ("gateway.platforms.yuanbao", "_yb_secret", "YUANBAO_DM_POLICY"),
-        ("gateway.platforms.signal", "_sig_secret", "SIGNAL_ALLOWED_USERS"),
+        ("plugins.platforms.signal.adapter", "_sig_secret", "SIGNAL_ALLOWED_USERS"),
         ("plugins.platforms.wecom.adapter", "_get_scoped_secret", "WECOM_ALLOWED_USERS"),
     ],
 )

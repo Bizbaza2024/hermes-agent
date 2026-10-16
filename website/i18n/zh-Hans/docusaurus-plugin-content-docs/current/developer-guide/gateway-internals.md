@@ -162,13 +162,13 @@ plugins/platforms/                  # 插件打包的适配器（每个一个目
 ├── wecom/adapter.py        # 企业微信（WeCom）回调
 ├── line/adapter.py         # LINE Messaging API
 ├── teams/adapter.py        # Microsoft Teams
+├── signal/adapter.py       # Signal（通过 signal-cli HTTP 守护进程，SSE + JSON-RPC）
 ├── irc/adapter.py          # IRC（作用域锁的标准示例）
 ├── bluebubbles/adapter.py  # Apple iMessage（通过 BlueBubbles macOS 服务端）
 └── …                       # google_chat、ntfy、photon、raft、simplex 等
 
 gateway/platforms/                  # 核心 base 与旧的直接适配器
 ├── base.py              # BasePlatformAdapter — 所有平台的共享逻辑
-├── signal.py            # Signal（通过 signal-cli REST API）
 ├── weixin.py            # 微信（个人版，通过 iLink Bot API）
 ├── qqbot/               # QQ Bot（腾讯 QQ，通过官方 API v2，子包）
 ├── yuanbao.py           # 元宝（腾讯）私信/群组适配器

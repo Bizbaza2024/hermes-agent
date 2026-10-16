@@ -20,7 +20,7 @@ _HAS_TELEGRAM = pytest.importorskip("telegram", reason="python-telegram-bot not 
 def _reset_signal_scheduler():
     """Drop the process-wide attachment scheduler so each test gets a
     fresh token bucket."""
-    from gateway.platforms.signal_rate_limit import _reset_scheduler
+    from plugins.platforms.signal.signal_rate_limit import _reset_scheduler
     _reset_scheduler()
     yield
     _reset_scheduler()
@@ -29,12 +29,12 @@ from gateway.config import Platform
 from tools.send_message_tool import (
     _resolve_slack_user_target,
     _send_matrix_via_adapter,
-    _send_signal,
     _send_telegram,
     _send_to_platform,
     send_message_tool,
 )
 from tools.send_message_targets import _parse_target_ref
+from plugins.platforms.signal.standalone import _send_signal
 # Discord helpers moved to the plugin in #24325.  Import from the new path
 # and provide a thin ``_send_discord(token, ...)`` shim that mirrors the
 # pre-migration signature so the existing test bodies keep working.
@@ -533,16 +533,19 @@ class TestSendToPlatformChunking:
         truncate_message() pass in _send_to_platform must know Signal's limit
         (regression for #67279 / #57929 — long sends were rejected whole).
         """
-        from gateway.platforms.signal import MAX_MESSAGE_LENGTH as SIGNAL_MAX
-        import tools.send_message_tool as smt
+        from plugins.platforms.signal.adapter import MAX_MESSAGE_LENGTH as SIGNAL_MAX
+        from hermes_cli.plugins import discover_plugins
+        from gateway.platform_registry import platform_registry
 
         sent = []
 
-        async def fake_send_signal(extra, chat_id, chunk, media_files=None):
+        async def fake_send_signal(pconfig, chat_id, chunk, *, thread_id=None, media_files=None,
+                                   force_document=False):
             sent.append(chunk)
             return {"success": True, "platform": "signal", "chat_id": chat_id}
 
-        monkeypatch.setattr(smt, "_send_signal", fake_send_signal)
+        discover_plugins()
+        monkeypatch.setattr(platform_registry.get("signal"), "standalone_sender_fn", fake_send_signal)
 
         long_msg = "word " * ((SIGNAL_MAX // 5) + 500)  # comfortably over limit
         result = asyncio.run(
@@ -1425,10 +1428,10 @@ def _patch_sendmsg_sleep_and_time(monkeypatch, capture: list):
             await _real_sleep(0)
 
     monkeypatch.setattr(
-        "gateway.platforms.signal_rate_limit.asyncio.sleep", fake_sleep
+        "plugins.platforms.signal.signal_rate_limit.asyncio.sleep", fake_sleep
     )
     monkeypatch.setattr(
-        "gateway.platforms.signal_rate_limit.time.monotonic", lambda: offset[0]
+        "plugins.platforms.signal.signal_rate_limit.time.monotonic", lambda: offset[0]
     )
 
 
