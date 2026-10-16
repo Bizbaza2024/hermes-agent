@@ -871,6 +871,20 @@ class TestMediaDeliveryDefaultMode:
         assert BasePlatformAdapter.validate_media_delivery_path(str(link)) is None
 
 
+def test_windows_drive_letter_host_mount_parses(monkeypatch):
+    """``C:/data:/workspace`` splits on the container colon, not the drive, and keeps the
+    POSIX container root on every gateway (``Path("/workspace").is_absolute()`` is False on
+    Windows). Unmarked so the Windows lanes run it."""
+    import json
+
+    from gateway.platforms import base
+
+    monkeypatch.setenv("TERMINAL_DOCKER_VOLUMES", json.dumps(["C:/data:/workspace:ro"]))
+    monkeypatch.setattr(base, "_resolve_path", lambda p, **_k: p)
+
+    assert base._parse_docker_volume_mounts() == [(Path("C:/data"), Path("/workspace"))]
+
+
 @pytest.mark.platforms("linux")
 class TestDockerContainerMediaPathTranslation:
     """MEDIA:/workspace (and configured mounts) must resolve to host paths."""
@@ -907,17 +921,6 @@ class TestDockerContainerMediaPathTranslation:
         assert BasePlatformAdapter.validate_media_delivery_path(
             "/output/report.pdf"
         ) == str(media.resolve())
-
-    def test_windows_drive_letter_host_mount_parses(self, monkeypatch):
-        """``C:/data:/workspace`` must split on the container colon, not the drive."""
-        import json
-
-        from gateway.platforms import base
-
-        monkeypatch.setenv("TERMINAL_DOCKER_VOLUMES", json.dumps(["C:/data:/workspace:ro"]))
-        monkeypatch.setattr(base, "_resolve_path", lambda p, **_k: p)
-
-        assert base._parse_docker_volume_mounts() == [(Path("C:/data"), Path("/workspace"))]
 
     def test_longest_prefix_wins(self, tmp_path, monkeypatch):
         import json
