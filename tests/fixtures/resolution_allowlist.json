@@ -90,11 +90,6 @@
     "kind": "bare_which"
   },
   {
-    "path": "gateway/platforms/whatsapp_cloud.py",
-    "symbol": "<module>",
-    "kind": "bare_which"
-  },
-  {
     "path": "gateway/run.py",
     "symbol": "_resolve_hermes_bin",
     "kind": "bare_which"
