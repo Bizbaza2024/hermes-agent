@@ -644,6 +644,7 @@ async def _standalone_send(pconfig, chat_id: str, message: str, *, thread_id: Op
             return send_error(f"BlueBubbles send failed: {result.error}")
         return {"success": True, "platform": "bluebubbles", "chat_id": chat_id, "message_id": result.message_id}
     except Exception as e:
+        logger.debug("BlueBubbles standalone send failed", exc_info=True)
         return send_error(f"BlueBubbles send failed: {e}")
 
 

@@ -64,7 +64,7 @@ def interactive_setup() -> None:
             _gw().print_warning(f"  signal-cli responded with status {resp.status_code}.")
             if not _gw().prompt_yes_no("  Continue anyway?", False):
                 return
-    except Exception as e:
+    except Exception as e:  # health: allow BLE001 -- connectivity probe in a wizard: any failure is "unreachable", the user decides
         _gw().print_warning(f"  Could not reach signal-cli at {url}: {e}")
         if not _gw().prompt_yes_no("  Save this URL anyway? (you can start signal-cli later)", True):
             return
