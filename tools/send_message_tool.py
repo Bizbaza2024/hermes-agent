@@ -18,7 +18,7 @@ from tools.send_message_senders import (
     _AUDIO_EXTS, _DEFAULT_CAPTION_LIMIT, _IMAGE_EXTS, _NO_DELIVERABLE, _VIDEO_EXTS, _VOICE_EXTS,
     _adapter_media_method, _error, _live_adapter, _media_caption_split, _plugin_standalone_sender,
     _registry_standalone_send, _resolve_slack_user_target, _sanitize_error_text,
-    _send_matrix_via_adapter, _send_qqbot, _send_telegram, _send_weixin, _send_yuanbao)
+    _send_matrix_via_adapter, _send_qqbot, _send_telegram, _send_yuanbao)
 from tools.registry import tool_error
 
 # NOTE: ``send_message`` is intentionally NOT registered as an agent-callable model tool
@@ -619,7 +619,8 @@ def _platform_max_length(platform):
 _PLUGIN_STANDALONE_MEDIA = {"discord": ("Discord", False, True, [], False), "feishu": ("Feishu", True, False, None, False),
                             "slack": ("Slack", True, True, [], False), "whatsapp": ("WhatsApp", True, True, None, True),
                             # Signal: attachments ride the JSON-RPC param on the final chunk.
-                            "signal": ("Signal", True, False, [], False)}
+                            "signal": ("Signal", True, False, [], False),
+                            "weixin": ("Weixin", True, False, None, False)}
 
 
 async def _send_plugin_standalone(platform_name, pconfig, chat_id, message, chunks, media_files, *, thread_id,
@@ -684,8 +685,9 @@ async def _send_to_platform(platform, pconfig, chat_id, message, thread_id=None,
     from gateway.config import Platform
     platform_name = platform.value if hasattr(platform, "value") else str(platform)
     media_files = media_files or []
-    if platform == Platform.WEIXIN:
-        return await _send_weixin(pconfig, chat_id, message, media_files=media_files)
+    if platform_name == "weixin":  # plugin standalone sender only: no other plugin's import can block it
+        return await _send_plugin_standalone(platform_name, pconfig, chat_id, message, [message], media_files,
+                                             thread_id=thread_id, max_len=None, force_document=force_document)
     # Telegram chunks internally on the *formatted* text (escaping inflates length).
     if platform == Platform.TELEGRAM:
         return await _send_telegram(

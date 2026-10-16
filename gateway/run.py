@@ -3319,8 +3319,6 @@ def _builtin_adapter_import(module: str, adapter_name: str, requirement: str):
 
 # platform -> (module, adapter class, requirements probe, warning on probe failure).
 _BUILTIN_ADAPTERS: dict[Platform, tuple[str, str, str, str]] = {
-    Platform.WEIXIN: ("weixin", "WeixinAdapter", "check_weixin_requirements",
-                      "Weixin: aiohttp/cryptography not installed"),
     Platform.API_SERVER: ("api_server", "APIServerAdapter", "check_api_server_requirements",
                           "API Server: aiohttp not installed"),
     Platform.WEBHOOK: ("webhook", "WebhookAdapter", "check_webhook_requirements",
