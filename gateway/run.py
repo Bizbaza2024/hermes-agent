@@ -3324,9 +3324,7 @@ _BUILTIN_ADAPTERS: dict[Platform, tuple[str, str, str, str]] = {
     Platform.WEBHOOK: ("webhook", "WebhookAdapter", "check_webhook_requirements",
                        "Webhook: aiohttp not installed"),
     Platform.MSGRAPH_WEBHOOK: ("msgraph_webhook", "MSGraphWebhookAdapter", "check_msgraph_webhook_requirements",
-                               "MSGraph webhook: aiohttp not installed"),
-    Platform.YUANBAO: ("yuanbao", "YuanbaoAdapter", "WEBSOCKETS_AVAILABLE",
-                       "Yuanbao: websockets not installed. Run: pip install websockets")}
+                               "MSGraph webhook: aiohttp not installed")}
 
 
 def _instantiate_builtin_adapter(platform: Platform, config: Any) -> Optional[BasePlatformAdapter]:

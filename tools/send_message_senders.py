@@ -460,30 +460,3 @@ async def _matrix_send_core(adapter, chat_id, message, media_files, metadata):
         if not last_result.success:
             return _error(f"Matrix media send failed: {last_result.error}")
     return {"error": _NO_DELIVERABLE} if last_result is None else _success("matrix", chat_id, message_id=last_result.message_id)
-
-
-def _gateway_platform_module(name, *, unavailable, unmet):
-    """``(gateway.platforms.<name>, None)`` once its ``check_<name>_requirements`` passes, else ``(None, error)``."""
-    import importlib
-    try:
-        module = importlib.import_module(f"gateway.platforms.{name}")
-    except ImportError:
-        return None, {"error": unavailable}
-    return (module, None) if getattr(module, f"check_{name}_requirements")() else (None, {"error": unmet})
-
-
-
-
-async def _send_yuanbao(chat_id, message, media_files=None):
-    """Send via the running Yuanbao adapter's persistent WebSocket (no throwaway client possible)."""
-    try:
-        from gateway.platforms.yuanbao import YuanbaoAdapter
-    except ImportError:
-        return _error("Yuanbao adapter module not available.")
-    adapter = YuanbaoAdapter.get_active()
-    if adapter is None:
-        return _error("Yuanbao adapter is not running. Start the gateway with yuanbao platform enabled first.")
-    try:
-        return await adapter._outbound.sender.send_direct(chat_id, message, media_files)
-    except Exception as e:
-        return _error(f"Yuanbao send failed: {e}")

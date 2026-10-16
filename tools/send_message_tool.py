@@ -18,7 +18,7 @@ from tools.send_message_senders import (
     _AUDIO_EXTS, _DEFAULT_CAPTION_LIMIT, _IMAGE_EXTS, _NO_DELIVERABLE, _VIDEO_EXTS, _VOICE_EXTS,
     _adapter_media_method, _error, _live_adapter, _media_caption_split, _plugin_standalone_sender,
     _registry_standalone_send, _resolve_slack_user_target, _sanitize_error_text,
-    _send_matrix_via_adapter, _send_telegram, _send_yuanbao)
+    _send_matrix_via_adapter, _send_telegram)
 from tools.registry import tool_error
 
 # NOTE: ``send_message`` is intentionally NOT registered as an agent-callable model tool
@@ -621,7 +621,8 @@ _PLUGIN_STANDALONE_MEDIA = {"discord": ("Discord", False, True, [], False), "fei
                             "slack": ("Slack", True, True, [], False), "whatsapp": ("WhatsApp", True, True, None, True),
                             # Signal: attachments ride the JSON-RPC param on the final chunk.
                             "signal": ("Signal", True, False, [], False),
-                            "weixin": ("Weixin", True, False, None, False)}
+                            "weixin": ("Weixin", True, False, None, False),
+                            "yuanbao": ("Yuanbao", True, False, None, False)}
 
 
 async def _send_plugin_standalone(platform_name, pconfig, chat_id, message, chunks, media_files, *, thread_id,
@@ -657,22 +658,18 @@ def _via_adapter_route(p, pc, cid, chunk, media, tid, fd):
 # Native-media chunked routes for built-in platforms; media rides on the final chunk, non-final
 # chunks get the sentinel. platform -> (media required, sentinel, sender(platform, pconfig,
 # chat_id, chunk, media, thread_id, force_document)). Matrix: ALL sends use the native adapter
-# (E2EE text). Yuanbao / WeCom: media needs the
-# running gateway. Slack text: live adapter (multi-workspace, ignored_channels gates) else the
+# (E2EE text). WeCom: media needs the running gateway. Slack text: live adapter (multi-workspace, ignored_channels gates) else the
 # plugin's standalone sender. Names resolve at call time so tests can monkeypatch the senders.
 _CHUNKED_ROUTES = {
     "matrix": (False, [], lambda p, pc, cid, chunk, media, tid, fd: _send_matrix_via_adapter(
         pc, cid, chunk, media_files=media, thread_id=tid)),
-    "yuanbao": (True, None, lambda p, pc, cid, chunk, media, tid, fd: _send_yuanbao(cid, chunk, media_files=media)),
     "slack": (False, [], _via_adapter_route),
     "wecom": (True, None, _via_adapter_route)}
 
 # Text-only senders for built-in platforms (generic path; media is dropped with a
 # warning). Signature: (pconfig, chat_id, chunk, thread_id) -> result.
-_TEXT_SENDERS = {
-    **{name: partial(_registry_standalone_send, name)
-       for name in ("whatsapp", "email", "sms", "dingtalk", "feishu", "wecom", "signal", "qqbot")},
-    "yuanbao": lambda pc, cid, chunk, tid: _send_yuanbao(cid, chunk)}
+_TEXT_SENDERS = {name: partial(_registry_standalone_send, name)
+                 for name in ("whatsapp", "email", "sms", "dingtalk", "feishu", "wecom", "signal", "qqbot", "yuanbao")}
 
 _MEDIA_PLATFORMS_NOTE = "telegram, discord, matrix, weixin, signal, yuanbao, feishu, whatsapp, slack and qqbot"
 
