@@ -230,7 +230,7 @@ def _admitted_models_max(mdir: Path, configured: int) -> int:
     return cap
 
 
-def _generate_presets(mdir: Path, preset_path: Path) -> Path | None:
+def _generate_presets(mdir: Path, preset_path: Path, engine_tag: str | None = None) -> Path | None:
     """Write the launch-policy INI for every staged model; returns the path to hand the router.
 
     Priced against CAPACITY, not live free VRAM: this runs while the outgoing server instance may
@@ -249,7 +249,8 @@ def _generate_presets(mdir: Path, preset_path: Path) -> Path | None:
 
     try:
         capacity = probe_budget(planning=True)
-        for entry in generate_presets(mdir, capacity, preset_path, live=_launch_budget(capacity)):
+        for entry in generate_presets(mdir, capacity, preset_path, live=_launch_budget(capacity),
+                                      engine_tag=engine_tag):
             if entry.refusal:
                 logger.warning("model refused by physics check: %s", entry.refusal)
         return preset_path
@@ -303,7 +304,8 @@ def refit_idle_presets(sup) -> bool:
     last = sup._refit_usable
     if last is not None and abs(live.usable_vram_bytes - last) < _REFIT_STEP_BYTES:
         return False
-    text = render_presets(plan_presets(models_dir(), capacity, live=live))
+    text = render_presets(plan_presets(models_dir(), capacity, live=live,
+                                       engine_tag=_SERVING_ENGINE.tag if _SERVING_ENGINE is not None else None))
     # Held across the write and the reload so a restart can't spawn between them; everything
     # slow ran above.
     with sup._lifecycle_lock:
@@ -453,7 +455,7 @@ def ensure_local_runtime(config: dict, force: bool = False) -> object | None:
 
             mdir = models_dir()
             mdir.mkdir(parents=True, exist_ok=True)
-            preset_path = _generate_presets(mdir, runtimes_root() / "presets.ini")
+            preset_path = _generate_presets(mdir, runtimes_root() / "presets.ini", engine.tag)
 
             sup = LlamaServerSupervisor(engine.binary, mdir, preset_path=preset_path,
                                         models_max=_admitted_models_max(

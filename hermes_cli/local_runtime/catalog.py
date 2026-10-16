@@ -103,6 +103,12 @@ class CatalogEntry:
     architecture: str = ""
     mmproj: AssetFile | None = None    # vision projector, downloads with model
     draft: AssetFile | None = None     # spec-decode draft model (e.g. DSpark)
+    # How the draft decodes. draft-dspark drafts only for a model spilled past GPU memory;
+    # draft-dflash replaces MTP whenever it fits, on one slot (each slot keeps a recurrent-state
+    # copy per draft position). Optional: a missing draft leaves the model as it was.
+    draft_spec_type: str = "draft-dspark"
+    draft_depth: int = 3
+    draft_min_engine: str = ""          # oldest llama.cpp release that loads the draft
     # MTP head shipped as its own file (the model carries none): the engine loads it as the
     # draft for MTP spec decode. Downloads with the model.
     mtp_head: AssetFile | None = None
@@ -152,6 +158,12 @@ class CatalogEntry:
 
     def download_bytes(self, variant: QuantVariant) -> int:
         return sum(f.size_bytes for f in self.download_files(variant))
+
+    def install_files(self, variant: QuantVariant) -> tuple:
+        """The files a variant needs to count as downloaded. The draft is optional: a model
+        installed before its draft joined the catalog stays installed."""
+        extras = tuple(a for a in (self.mmproj, self.mtp_head) if a is not None)
+        return tuple(variant.files) + extras
 
 
 @dataclass(frozen=True)
@@ -290,7 +302,7 @@ def recommended_entry(budget: HardwareBudget,
 
 _CATALOG_URL = ("https://raw.githubusercontent.com/NousResearch/hermes-agent"
                 "/main/hermes_cli/local_runtime/catalog.json")
-_SCHEMA_VERSION = 2  # bump when an older app would read a newer catalog but launch its entries wrongly
+_SCHEMA_VERSION = 3  # bump when an older app would read a newer catalog but launch its entries wrongly
 _REFRESH_TTL_S = 6 * 3600
 _refresh_lock = threading.Lock()
 # None = never attempted: monotonic() counts from boot, so a 0.0 sentinel read as "refreshed at
@@ -313,6 +325,7 @@ _SCALAR_FIELDS = {
     "moe": (bool, False), "mtp": (bool, False), "mtp_draft_depth": (int, 3),
     "n_vocab": (int, 0), "sampling": (dict, {}), "min_engine": (str, ""),
     "quality": (int, 0), "decode_fraction": (float, 1.0), "architecture": (str, ""),
+    "draft_spec_type": (str, "draft-dspark"), "draft_depth": (int, 3), "draft_min_engine": (str, ""),
 }
 
 

@@ -1004,8 +1004,8 @@ def test_boot_prices_the_engine_it_serves(tmp_path, monkeypatch):
     monkeypatch.setattr("hermes_cli.config.load_config_readonly",
                         lambda: {"local_runtime": {"backend": "cpu"}})  # another profile's config
     priced: list = []
-    monkeypatch.setattr(bootstrap, "_generate_presets",
-                        lambda mdir, path: priced.append(hardware._configured_engine()) or path)
+    monkeypatch.setattr(bootstrap, "_generate_presets", lambda mdir, path, engine_tag=None: priced.append(
+        (hardware._configured_engine(), engine_tag)) or path)
     monkeypatch.setattr(bootstrap, "_admitted_models_max", lambda mdir, configured: configured)
 
     class _NoStart:
@@ -1021,5 +1021,6 @@ def test_boot_prices_the_engine_it_serves(tmp_path, monkeypatch):
     monkeypatch.setattr("hermes_cli.local_runtime.supervisor.LlamaServerSupervisor", _NoStart)
 
     assert bootstrap.ensure_local_runtime({"local_runtime": {"enabled": True, "backend": "vulkan"}}) is None
-    assert priced == [vulkan]
+    # The release reaches the presets too: drafts gate on the engine that will load them.
+    assert priced == [(vulkan, "b1")]
     assert bootstrap.serving_engine() is None  # a failed boot serves nothing

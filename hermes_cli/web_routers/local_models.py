@@ -425,6 +425,26 @@ def _download_plan(entry, variant) -> list:
     return plan
 
 
+def _missing_drafts(engine_tag: str) -> list:
+    """Download-plan rows for the DFlash drafts of downloaded models that ``engine_tag`` can load
+    but that aren't on disk: models downloaded before their draft joined the catalog."""
+    staged = set(bootstrap.staged_model_ids())
+    build = int(engine_tag.removeprefix("b"))
+    plan = []
+    for entry in catalog.CATALOG:
+        asset = entry.draft
+        if asset is None or entry.draft_spec_type != "draft-dflash":
+            continue
+        if not any(v.model_id in staged for v in entry.variants):
+            continue
+        if entry.draft_min_engine and build < int(entry.draft_min_engine.removeprefix("b")):
+            continue
+        dest = bootstrap.assets_dir() / asset.local_name
+        if not dest.is_file():
+            plan.append((_hf_url(asset.repo or entry.repo, asset.path, asset.revision), dest, asset.size_bytes))
+    return plan
+
+
 def _run_download_plan(job: dict[str, Any], plan: list, label: str) -> None:
     """The downloader counts completed files and every part of this plan."""
     _step(job, "downloading", f"Downloading {label}")
@@ -564,11 +584,17 @@ _QUANT_REASONS = {
 _QUANT_REASON_COMPACT = "Compact build sized for this machine ({quant}) — larger than GPU memory, runs slower"
 
 
+def _installed(entry, variant) -> bool:
+    """Every file the variant needs is on disk. The draft is optional: a model downloaded before
+    its draft joined the catalog stays downloaded."""
+    return all(((bootstrap.models_dir() if f in variant.files else bootstrap.assets_dir())
+                / f.local_name).is_file() for f in entry.install_files(variant))
+
+
 def _catalog_row(entry, budget, recommended, recommended_reason, staged_ids) -> dict[str, Any]:
     choice = catalog.select_variant(entry, budget)
     # Any variant of this family on disk counts as downloaded.
-    dl = next((v for v in entry.variants if v.model_id in staged_ids
-               and all(dest.is_file() for _, dest, _ in _download_plan(entry, v))), None)
+    dl = next((v for v in entry.variants if v.model_id in staged_ids and _installed(entry, v)), None)
     row: dict[str, Any] = {
         "id": entry.id, "display_name": entry.display_name, "description": entry.description,
         "native_context": entry.n_ctx_train, "native_context_label": _k_label(entry.n_ctx_train),
@@ -668,9 +694,14 @@ def local_models_runtime_install(body: RuntimeInstallBody, profile: Optional[str
         with _config_profile_scope(profile):
             previous = binaries.installed_engine(backend)
             engine = _install_engine_job(job, backend)
+            drafts = _missing_drafts(engine.tag)
+            if drafts:
+                _step(job, "downloading", "Downloading draft models that speed up generation")
+                _download_job(job, drafts)
             running = bootstrap.get_supervisor()
-            if running is not None and previous != engine:
-                _step(job, "restarting", "Switching the running server to the pinned build")
+            if running is not None and (previous != engine or drafts):
+                _step(job, "restarting", "Switching the running server to the pinned build"
+                      if previous != engine else "Restarting the local server")
                 bootstrap.refresh_local_runtime()
         _finish(job, f"llama.cpp {tag} ready ({backend})")
 

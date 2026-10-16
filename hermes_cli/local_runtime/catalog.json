@@ -1,5 +1,5 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "models": [
     {
       "id": "qwen3.8-27b",
@@ -37,7 +37,16 @@
         "min-p": "0.0"
       },
       "quality": 90,
-      "decode_fraction": 1.0
+      "decode_fraction": 1.0,
+      "draft": {
+        "path": "Qwen3.8-27B-DFlash2-Q4_K_M.gguf",
+        "size_bytes": 1143006816,
+        "repo": "z-lab/Qwen3.8-27B-DFlash2-GGUF",
+        "revision": "2d9571f8ce46e151f61c6499c99dee6079e1d610"
+      },
+      "draft_spec_type": "draft-dflash",
+      "draft_depth": 7,
+      "draft_min_engine": "b11370"
     },
     {
       "id": "qwen3.8-flash-next",
