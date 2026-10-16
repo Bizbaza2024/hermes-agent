@@ -194,9 +194,11 @@ async def test_no_scheduler_starts_the_fresh_fifo_before_reset_cleanup_finishes(
     await asyncio.wait_for(entered.wait(), 10)
     _, retry = await _admit(native, "B", admitted[1][0])  # dedupes, then schedules its FIFO
     assert retry.admission_id == admitted[1][1].admission_id
-    for _ in range(25):
-        await asyncio.sleep(0.02)
-    assert [t for t, _ in executed] == ["A"]  # nothing ran on the fresh session during the sync
+    ran_early = asyncio.Event()
+    monkeypatch.setattr(runner, "_handle_message_with_agent", lambda *a: ran_early.set() or turn(*a))
+    with pytest.raises(asyncio.TimeoutError):  # nothing runs on the fresh session during the sync
+        await asyncio.wait_for(ran_early.wait(), 0.5)
+    assert [t for t, _ in executed] == ["A"]
     release.set()
     for _ in range(300):
         if len(executed) == 3:
