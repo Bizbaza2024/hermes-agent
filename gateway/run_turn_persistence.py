@@ -321,8 +321,9 @@ class GatewayTurnPersistenceMixin:
             )
         elif agent_result.get("compression_exhausted") and session_entry and session_key:
             logger.info("Auto-resetting session %s after compression exhaustion.", session_entry.session_id)
-            new_entry = await self.async_session_store.reset_session(session_key)
-            from gateway.session_automation import move_route_wakes
+            from gateway.session_automation import move_route_wakes, reset_and_rehome_messages
+            # Messages queued behind the exhausted turn still run, on the fresh session (unlike /new).
+            new_entry = await reset_and_rehome_messages(self, session_key, session_entry.session_id)
             await move_route_wakes(self, session_key, session_entry.session_id)
             self._evict_cached_agent(session_key)
             # Conversation boundary: the funnel clears every conversation-scoped per-session dict.

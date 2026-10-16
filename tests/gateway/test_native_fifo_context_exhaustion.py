@@ -1,0 +1,91 @@
+"""Native messages queued behind a turn that exhausts its context run once, in order, on the fresh
+session the auto-reset creates; the exhausted turn is not replayed and a transport retry of a
+re-homed message still dedupes. Real GatewayRunner, DiscordAdapter, SessionAuthority and drain over
+SQLite; the turn is a stand-in. Adapted from helix4u's #139673 headline test."""
+import asyncio
+from types import SimpleNamespace
+
+import pytest
+import pytest_asyncio
+
+from gateway.config import GatewayConfig, Platform, PlatformConfig
+from gateway.platforms.base import SendResult
+from gateway.platforms.event import MessageEvent
+from gateway.run import GatewayRunner
+from gateway.session_authority import SessionAuthority, initialize_session_authority
+from gateway.session_contract import SessionRef
+from gateway.session_ingress_context import native_callback
+from hermes_constants import get_hermes_home
+from hermes_state_runtime import list_session_admissions
+from plugins.platforms.discord.adapter import DiscordAdapter
+
+
+@pytest_asyncio.fixture
+async def native(monkeypatch):
+    monkeypatch.setenv("DISCORD_ALLOWED_USERS", "42")
+    monkeypatch.setattr(SessionAuthority, "_schedule", lambda self, ref: None)
+    runner = GatewayRunner(GatewayConfig())
+    adapter = DiscordAdapter(PlatformConfig(enabled=True, token="fixture-token", typing_indicator=False))
+
+    async def send(chat_id, content, reply_to=None, metadata=None):
+        return SendResult(success=True, message_id="fixture-reply")
+
+    monkeypatch.setattr(adapter, "send", send)
+    runner.adapters = {Platform.DISCORD: adapter}
+    authority = await initialize_session_authority(runner, profile_id="default", instance_id="fixture")
+    runner._wire_adapter_handlers(adapter)
+    source = adapter.build_source(chat_id="42", chat_type="dm", user_id="42")
+    try:
+        yield SimpleNamespace(runner=runner, adapter=adapter, authority=authority, source=source)
+    finally:
+        from gateway.session_runtime_workers import mutation_tasks
+        await asyncio.gather(*mutation_tasks(authority))
+        authority.db.close()
+
+
+async def _admit(native, text, event=None):
+    event = event or MessageEvent(text=text, source=native.source, message_id=text)
+    with native_callback(native.runner, event, get_hermes_home()):
+        return event, await native.authority.admit_native(event)
+
+
+@pytest.mark.asyncio
+async def test_exhaustion_reset_runs_queued_native_messages_on_the_fresh_session(native, monkeypatch):
+    from gateway.session_results import execution_result
+    runner, authority, db = native.runner, native.authority, native.authority.db
+    admitted = [await _admit(native, text) for text in ("A", "B", "C")]
+    old = admitted[0][1].ref
+    executed, fresh = [], {}
+
+    async def turn(event, source, session_key, run_generation):
+        entry = runner.session_store.lookup_by_session_key(session_key)
+        executed.append((event.text, entry.session_id))
+        captured = execution_result.get()
+        if event.text == "A":
+            result = {"failed": True, "compression_exhausted": True, "messages": []}
+            captured["result"] = result
+            _, new_entry = await runner._hmwa_compression_exhaustion_reset(
+                result, "context exhausted", entry, session_key, source)
+            fresh["sid"] = new_entry.session_id
+            fresh["D"] = await _admit(native, "D")  # admitted after the reset, behind B and C
+        else:
+            captured["result"] = {"final_response": "reply", "messages": []}
+        return "reply"
+
+    monkeypatch.setattr(runner, "_handle_message_with_agent", turn)
+    await authority._drain(old)
+    new = fresh["sid"]
+    assert new != old.session_id
+    if new in authority.sessions:
+        await authority._drain(SessionRef(authority.profile_id, new))
+    assert executed == [("A", old.session_id), ("B", new), ("C", new), ("D", new)]
+    old_rows = list_session_admissions(db, session_id=old.session_id, pending_only=False)
+    assert [(r["request_id"], r["status"]) for r in old_rows] == [("A", "terminal")]
+    new_rows = list_session_admissions(db, session_id=new, pending_only=False)
+    assert [(r["request_id"], r["status"], r["outcome"]) for r in new_rows] == [
+        (t, "terminal", "completed") for t in ("B", "C", "D")]
+    # The re-home keeps each message's admission identity; a transport retry of B dedupes onto it.
+    assert [r["admission_id"] for r in new_rows[:2]] == [admitted[1][1].admission_id, admitted[2][1].admission_id]
+    _, retry = await _admit(native, "B", admitted[1][0])  # the same delivery, redelivered
+    assert retry.admission_id == admitted[1][1].admission_id
+    assert [t for t, _ in executed].count("B") == 1

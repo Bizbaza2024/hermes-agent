@@ -296,6 +296,45 @@ async def move_route_wakes(runner, session_key, old_session_id):
             ordered=True, after=partial(authority._schedule_admitted, new))
 
 
+async def reset_and_rehome_messages(runner, session_key, old_session_id):
+    """The compression-exhaustion auto-reset: rotate the route to a fresh session, then move the old
+    owner's still-queued native ``messaging:*`` rows onto it in one transaction, same order and
+    request ids. Left behind they pause the old FIFO (``admission_conflict``) and never run, while a
+    later message runs ahead of them. /new and /stop cancel these rows instead (the user asked for a
+    clean break); the exhausted turn itself is started, so it is never moved. Both steps run under
+    the old owner's ``mutation_lock``. Returns ``reset_session``'s entry."""
+    from contextlib import nullcontext
+    from gateway.session_authorities import active_authority
+    authority = active_authority(runner)
+    old = SessionRef(authority.profile_id, authority.logical_owner(old_session_id)) if authority else None
+    live = authority.sessions.get(old.session_id) if old and old_session_id else None
+    async with live.mutation_lock if live is not None else nullcontext():
+        entry = await runner.async_session_store.reset_session(session_key)
+        if live is None or entry is None:
+            return entry
+        import asyncio
+        from functools import partial
+        from gateway.session_authority import LiveSession
+        from gateway.session_runtime_workers import tracked_write
+        from hermes_state_runtime import rehome_queued_inputs
+        new = SessionRef(authority.profile_id, authority.logical_owner(entry.session_id))
+        if new == old:
+            return entry
+        if authority.db.get_session(new.session_id) is None:
+            await asyncio.to_thread(authority.db.create_session, new.session_id, source=live.source.platform.value)
+        # Ordered with native admissions: an admit already in flight to the old owner commits first
+        # and is carried along.
+        moved = await tracked_write(authority, partial(
+            rehome_queued_inputs, authority.db, epoch=authority.epoch, old_session_id=old.session_id,
+            new_session_id=new.session_id, principal_prefix='messaging:'), ordered=True)
+        if moved:
+            authority.sessions.setdefault(new.session_id, LiveSession(live.source, session_key))
+            authority._publish_pending(old)
+            authority._publish_pending(new)
+            authority._schedule(new)
+    return entry
+
+
 async def admit_route_wake(runner, adapter, source, text, producer, metadata=None):
     """Commit a producer wake (Kanban push wake, /loop tick) for ``source``'s route into the
     authority FIFO, like heartbeats and process completions, instead of a classic turn that
