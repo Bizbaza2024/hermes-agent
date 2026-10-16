@@ -305,8 +305,9 @@ async def reset_and_rehome_messages(runner, session_key, old_session_id):
 
     The rotation (sessions.json) and the move (one SQLite transaction) run in one worker step
     ordered with native admissions, not atomically across the two stores: a redelivery that
-    resolves the route to the fresh session commits after the move and dedupes onto the moved row.
-    Returns ``(entry, release)``. Until the caller runs ``release()``
+    resolves the route to the fresh session commits after the move and dedupes onto the moved row,
+    and one that reserved the old route before the rotation is retargeted at commit
+    (``_admit_native_write``). Returns ``(entry, release)``. Until the caller runs ``release()``
     (once, after its conversation cleanup and topic binding sync, also on failure) the fresh
     session's ``claim_gate`` is held, so no scheduler (a redelivery, a moved route wake, this
     move) starts a turn there against stale state; ``release()`` then schedules its FIFO."""
@@ -330,6 +331,8 @@ async def reset_and_rehome_messages(runner, session_key, old_session_id):
             return entry, None, []
         if authority.db.get_session(new.session_id) is None:
             authority.db.create_session(new.session_id, source=live.source.platform.value)
+        # An admission that reserved the old route before this rotation commits after it.
+        authority.rotated_owners[old.session_id] = session_key
         return entry, new, rehome_queued_inputs(
             authority.db, epoch=authority.epoch, old_session_id=old.session_id,
             new_session_id=new.session_id, principal_prefix='messaging:')

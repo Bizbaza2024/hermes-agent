@@ -206,3 +206,55 @@ async def test_no_scheduler_starts_the_fresh_fifo_before_reset_cleanup_finishes(
     assert executed == [("A", old.session_id), ("B", new), ("C", new)]
     assert events.index("sync:done") < events.index("turn:B")
 
+
+@pytest.mark.asyncio
+async def test_admission_reserved_on_the_old_route_commits_on_the_fresh_session(native, monkeypatch):
+    """A retry of queued B and a new D that reserved the old route before the reset commit after
+    the re-home: B dedupes onto its moved row (same admission id), D queues behind it there."""
+    import threading
+    from gateway.session_results import execution_result
+    runner, authority, db = native.runner, native.authority, native.authority.db
+    loop = asyncio.get_running_loop()
+    admitted = [await _admit(native, text) for text in ("A", "B", "C")]
+    old = admitted[0][1].ref
+    reserve_real, held, release = authority._reserve_route, [], threading.Event()
+
+    def held_reserve(src):
+        answer = reserve_real(src)
+        loop.call_soon_threadsafe(held.append, answer)
+        assert release.wait(10)
+        return answer
+
+    monkeypatch.setattr(authority, "_reserve_route", held_reserve)
+    late = [asyncio.create_task(_admit(native, "B", admitted[1][0])), asyncio.create_task(_admit(native, "D"))]
+    for _ in range(250):
+        if len(held) == 2:
+            break
+        await asyncio.sleep(0.02)
+    assert [sid for sid, _ in held] == [old.session_id] * 2
+    executed, fresh = [], {}
+
+    async def turn(event, source, session_key, run_generation):
+        entry = runner.session_store.lookup_by_session_key(session_key)
+        executed.append((event.text, entry.session_id))
+        captured = execution_result.get()
+        if event.text == "A":
+            result = {"failed": True, "compression_exhausted": True, "messages": []}
+            captured["result"] = result
+            _, new_entry = await runner._hmwa_compression_exhaustion_reset(
+                result, "context exhausted", entry, session_key, source)
+            fresh["sid"] = new_entry.session_id
+        else:
+            captured["result"] = {"final_response": "reply", "messages": []}
+        return "reply"
+
+    monkeypatch.setattr(runner, "_handle_message_with_agent", turn)
+    await authority._drain(old)  # A exhausts; reset + re-home finish while B/D hold old reservations
+    release.set()
+    (_, retry), (_, late_d) = await asyncio.gather(*late)
+    new = fresh["sid"]
+    assert retry.admission_id == admitted[1][1].admission_id
+    assert retry.ref.session_id == late_d.ref.session_id == new
+    await authority._drain(SessionRef(authority.profile_id, new))
+    assert executed == [("A", old.session_id), ("B", new), ("C", new), ("D", new)]
+    assert [r["request_id"] for r in list_session_admissions(db, session_id=old.session_id, pending_only=False)] == ["A"]
