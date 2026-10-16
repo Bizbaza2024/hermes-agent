@@ -125,6 +125,9 @@ class CatalogEntry:
     # MoE. With memory bandwidth this predicts decode speed — the physics half of the
     # recommendation.
     decode_fraction: float = 1.0
+    # False lists the entry for explicit choice only: it is never the automatic recommendation or
+    # quickstart's pick on any machine, so it needs no quality ordering.
+    recommend: bool = True
 
     @property
     def mtp_capable(self) -> bool:
@@ -263,13 +266,14 @@ def recommended_entry(budget: HardwareBudget,
     """The catalog's default pick for THIS machine, with its reason key.
 
     Callers pass pre-filtered entries when some are ineligible for reasons the catalog can't know
-    (engine too old). Reasons: product-default (the product's maker chose this entry and it runs
-    resident); best-quality-resident (quality won among resident entries clearing the pleasant
-    floor); speed-gated-quality (same, but the floor eliminated a HIGHER quality candidate).
+    (engine too old). Entries marked ``recommend: false`` are never picked. Reasons:
+    product-default (the product's maker chose this entry and it runs resident);
+    best-quality-resident (quality won among resident entries clearing the pleasant floor);
+    speed-gated-quality (same, but the floor eliminated a HIGHER quality candidate).
     Returns None when no eligible entry runs resident at the pleasant floor; slower and spilled
     models remain available for explicit selection.
     """
-    pool = CATALOG if entries is None else entries
+    pool = tuple(e for e in (CATALOG if entries is None else entries) if e.recommend)
     fitting = [(e, c) for e in pool if (c := select_variant(e, budget)) is not None]
     if not fitting:
         return None
@@ -325,7 +329,8 @@ _SCALAR_FIELDS = {
     "moe": (bool, False), "mtp": (bool, False), "mtp_draft_depth": (int, 3),
     "n_vocab": (int, 0), "sampling": (dict, {}), "min_engine": (str, ""),
     "quality": (int, 0), "decode_fraction": (float, 1.0), "architecture": (str, ""),
-    "draft_spec_type": (str, "draft-dspark"), "draft_depth": (int, 3), "draft_min_engine": (str, ""),
+    "recommend": (bool, True), "draft_spec_type": (str, "draft-dspark"), "draft_depth": (int, 3),
+    "draft_min_engine": (str, ""),
 }
 
 

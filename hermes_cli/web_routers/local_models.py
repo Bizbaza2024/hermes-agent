@@ -798,7 +798,7 @@ def _quickstart_target(body: QuickstartBody, budget):
                 status_code=409,
                 detail="No automatic recommendation for this machine — open Local Models to browse or choose a model explicitly",
             )
-        candidates = [picked[0]] + [e for e in catalog.CATALOG if e.id != picked[0].id]
+        candidates = [picked[0]] + [e for e in catalog.CATALOG if e.id != picked[0].id and e.recommend]
     for candidate in candidates:
         choice = catalog.select_variant(candidate, budget)
         if choice is not None and not _engine_too_old(candidate.min_engine):

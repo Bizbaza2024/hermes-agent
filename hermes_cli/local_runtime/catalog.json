@@ -189,6 +189,48 @@
       },
       "quality": 85,
       "decode_fraction": 0.1
+    },
+    {
+      "id": "nemotron-3.5-bolt-74b-a9b",
+      "display_name": "Nemotron 3.5 Bolt",
+      "description": "NVIDIA's 74B mixture-of-experts in a 2-bit build; sees images",
+      "repo": "nvidia/Nemotron-3.5-Bolt-74B-A9B-IQ2-GGUF",
+      "variants": [
+        {
+          "quant": "IQ2",
+          "files": [
+            {
+              "path": "NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB.gguf",
+              "size_bytes": 22018326528,
+              "revision": "e0fecb69cb3e5e4c5e8a056fa2aec98c78e91246"
+            }
+          ]
+        }
+      ],
+      "n_ctx_train": 262144,
+      "full_layers": 8,
+      "recurrent_layers": 80,
+      "per_layer_f16": 1024,
+      "moe": true,
+      "n_vocab": 131072,
+      "architecture": "nemotron_h_moe",
+      "mmproj": {
+        "path": "mmproj-NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB.gguf",
+        "size_bytes": 1733692736,
+        "revision": "e0fecb69cb3e5e4c5e8a056fa2aec98c78e91246"
+      },
+      "min_engine": "b11671",
+      "decode_fraction": 0.22,
+      "recommend": false,
+      "draft": {
+        "path": "NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB-LiLiCorr.gguf",
+        "size_bytes": 998242560,
+        "repo": "nvidia/Nemotron-3.5-Bolt-74B-A9B-IQ2-LiLiCorr-GGUF",
+        "revision": "182d2987939e12f458298b5d5f6ef98912f4ad6c"
+      },
+      "draft_spec_type": "draft-dflash",
+      "draft_depth": 7,
+      "draft_min_engine": "b11671"
     }
   ]
 }
