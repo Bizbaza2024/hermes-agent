@@ -140,6 +140,10 @@ class GatewayConnection:
                         raise self._error
                     return
                 thread = self._thread
+                if thread is not None and self._ready.is_set() and self.client is None:
+                    # That loop is over (hung up, or its redial failed) but may not have exited
+                    # yet: wait it out, or this call re-raises the last failure instead of dialing.
+                    thread.join(max(deadline - time.monotonic(), 0))
                 if thread is None or not thread.is_alive():
                     from agent.memory_provider import spawn_context_thread
 
