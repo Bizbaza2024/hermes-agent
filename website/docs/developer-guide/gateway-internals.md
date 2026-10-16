@@ -563,13 +563,13 @@ plugins/platforms/                  # plugin-packaged adapters (one dir each)
 ├── line/adapter.py         # LINE Messaging API
 ├── teams/adapter.py        # Microsoft Teams
 ├── irc/adapter.py          # IRC (canonical scoped-lock example)
+├── bluebubbles/adapter.py  # Apple iMessage via BlueBubbles macOS server
 └── …                       # google_chat, ntfy, photon, raft, simplex, …
 
 gateway/platforms/                  # core base + legacy direct adapters
 ├── base.py              # BasePlatformAdapter — shared logic for all platforms
 ├── signal.py            # Signal via signal-cli REST API
 ├── weixin.py            # Weixin (personal WeChat) via iLink Bot API
-├── bluebubbles.py       # Apple iMessage via BlueBubbles macOS server
 ├── qqbot/               # QQ Bot (Tencent QQ) via Official API v2 (sub-package)
 ├── yuanbao.py           # Yuanbao (Tencent) DM/group adapter
 ├── msgraph_webhook.py   # Microsoft Graph change-notification webhook (Teams, Outlook, etc.)
