@@ -3319,8 +3319,6 @@ def _builtin_adapter_import(module: str, adapter_name: str, requirement: str):
 
 # platform -> (module, adapter class, requirements probe, warning on probe failure).
 _BUILTIN_ADAPTERS: dict[Platform, tuple[str, str, str, str]] = {
-    Platform.WHATSAPP_CLOUD: ("whatsapp_cloud", "WhatsAppCloudAdapter", "check_whatsapp_cloud_requirements",
-                              "WhatsApp Cloud: aiohttp/httpx missing — reinstall hermes-agent"),
     Platform.SIGNAL: ("signal", "SignalAdapter", "check_signal_requirements",
                       "Signal: runtime requirements not met"),
     Platform.WEIXIN: ("weixin", "WeixinAdapter", "check_weixin_requirements",
