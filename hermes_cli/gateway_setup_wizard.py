@@ -317,8 +317,6 @@ def _setup_standard_platform(platform: dict):
     _gw().print_success(f"{emoji} {label} configured!")
 
 
-
-
 def _builtin_setup_fn(key: str):
     """Resolve a built-in platform's setup function; late-bound to dodge the hermes_cli.setup cycle."""
     from hermes_cli import setup as _s
