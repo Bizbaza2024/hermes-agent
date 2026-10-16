@@ -89,3 +89,63 @@ async def test_exhaustion_reset_runs_queued_native_messages_on_the_fresh_session
     _, retry = await _admit(native, "B", admitted[1][0])  # the same delivery, redelivered
     assert retry.admission_id == admitted[1][1].admission_id
     assert [t for t, _ in executed].count("B") == 1
+
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("redeliver", [True, False])
+async def test_exhaustion_reset_is_ordered_with_redelivery_and_cleanup(native, monkeypatch, redeliver):
+    """A redelivery of queued B that resolves the route to the fresh session mid-reset dedupes onto
+    the moved row (no UNIQUE collision rolling the whole move back); and the reset schedules the
+    moved rows only after the conversation cleanup and topic binding sync."""
+    from gateway.session_results import execution_result
+    runner, authority, db = native.runner, native.authority, native.authority.db
+    loop = asyncio.get_running_loop()
+    admitted = [await _admit(native, text) for text in ("A", "B", "C")]
+    old = admitted[0][1].ref
+    events, redelivery = [], {}
+    real_reset = runner.session_store.reset_session
+
+    def reset_then_redeliver(session_key, *args, **kwargs):
+        entry = real_reset(session_key, *args, **kwargs)
+        if redeliver:  # the transport redelivers B right after the route rotated
+            redelivery["B"] = future = asyncio.run_coroutine_threadsafe(_admit(native, "B", admitted[1][0]), loop)
+            try:
+                future.result(timeout=1)  # times out when (correctly) ordered behind the move
+            except TimeoutError:
+                pass
+        return entry
+
+    monkeypatch.setattr(runner.session_store, "reset_session", reset_then_redeliver)
+    monkeypatch.setattr(runner, "_clear_conversation_scope", lambda *a, **k: events.append("clear"))
+    monkeypatch.setattr(runner, "_sync_telegram_topic_binding", lambda *a, **k: events.append("sync"))
+    monkeypatch.setattr(SessionAuthority, "_schedule", lambda self, ref: events.append("schedule"))
+    executed, fresh = [], {}
+
+    async def turn(event, source, session_key, run_generation):
+        entry = runner.session_store.lookup_by_session_key(session_key)
+        executed.append(event.text)
+        captured = execution_result.get()
+        if event.text == "A":
+            result = {"failed": True, "compression_exhausted": True, "messages": []}
+            captured["result"] = result
+            _, new_entry = await runner._hmwa_compression_exhaustion_reset(
+                result, "context exhausted", entry, session_key, source)
+            fresh["sid"] = new_entry.session_id
+        else:
+            captured["result"] = {"final_response": "reply", "messages": []}
+        return "reply"
+
+    monkeypatch.setattr(runner, "_handle_message_with_agent", turn)
+    await authority._drain(old)
+    new = fresh["sid"]
+    if redeliver:
+        _, retry = await asyncio.wrap_future(redelivery["B"])
+        assert retry.admission_id == admitted[1][1].admission_id
+    else:
+        assert events == ["clear", "sync", "schedule"]
+    await authority._drain(SessionRef(authority.profile_id, new))
+    assert executed == ["A", "B", "C"]
+    new_rows = list_session_admissions(db, session_id=new, pending_only=False)
+    assert [(r["request_id"], r["admission_id"], r["status"]) for r in new_rows] == [
+        ("B", admitted[1][1].admission_id, "terminal"), ("C", admitted[2][1].admission_id, "terminal")]

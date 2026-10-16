@@ -297,42 +297,49 @@ async def move_route_wakes(runner, session_key, old_session_id):
 
 
 async def reset_and_rehome_messages(runner, session_key, old_session_id):
-    """The compression-exhaustion auto-reset: rotate the route to a fresh session, then move the old
+    """The compression-exhaustion auto-reset: rotate the route to a fresh session and move the old
     owner's still-queued native ``messaging:*`` rows onto it in one transaction, same order and
     request ids. Left behind they pause the old FIFO (``admission_conflict``) and never run, while a
     later message runs ahead of them. /new and /stop cancel these rows instead (the user asked for a
-    clean break); the exhausted turn itself is started, so it is never moved. Both steps run under
-    the old owner's ``mutation_lock``. Returns ``reset_session``'s entry."""
-    from contextlib import nullcontext
+    clean break); the exhausted turn itself is started, so it is never moved.
+
+    The rotation and the move are one write ordered with native admissions: a redelivery that
+    resolves the route to the fresh session commits after the move and dedupes onto the moved row
+    (committed first, it would collide with it and roll the whole move back). Returns
+    ``(entry, schedule)``: the caller runs ``schedule()`` once its conversation cleanup and topic
+    binding sync are done, so a moved message never starts a turn against stale state."""
     from gateway.session_authorities import active_authority
     authority = active_authority(runner)
     old = SessionRef(authority.profile_id, authority.logical_owner(old_session_id)) if authority else None
     live = authority.sessions.get(old.session_id) if old and old_session_id else None
-    async with live.mutation_lock if live is not None else nullcontext():
-        entry = await runner.async_session_store.reset_session(session_key)
-        if live is None or entry is None:
-            return entry
-        import asyncio
-        from functools import partial
-        from gateway.session_authority import LiveSession
-        from gateway.session_runtime_workers import tracked_write
-        from hermes_state_runtime import rehome_queued_inputs
+    if live is None:
+        return await runner.async_session_store.reset_session(session_key), lambda: None
+    from functools import partial
+    from gateway.session_authority import LiveSession
+    from gateway.session_runtime_workers import tracked_write
+    from hermes_state_runtime import rehome_queued_inputs
+
+    def rotate_and_move():
+        entry = runner.session_store.reset_session(session_key)
+        if entry is None:
+            return None, None, []
         new = SessionRef(authority.profile_id, authority.logical_owner(entry.session_id))
         if new == old:
-            return entry
+            return entry, None, []
         if authority.db.get_session(new.session_id) is None:
-            await asyncio.to_thread(authority.db.create_session, new.session_id, source=live.source.platform.value)
-        # Ordered with native admissions: an admit already in flight to the old owner commits first
-        # and is carried along.
-        moved = await tracked_write(authority, partial(
-            rehome_queued_inputs, authority.db, epoch=authority.epoch, old_session_id=old.session_id,
-            new_session_id=new.session_id, principal_prefix='messaging:'), ordered=True)
-        if moved:
-            authority.sessions.setdefault(new.session_id, LiveSession(live.source, session_key))
-            authority._publish_pending(old)
-            authority._publish_pending(new)
-            authority._schedule(new)
-    return entry
+            authority.db.create_session(new.session_id, source=live.source.platform.value)
+        return entry, new, rehome_queued_inputs(
+            authority.db, epoch=authority.epoch, old_session_id=old.session_id,
+            new_session_id=new.session_id, principal_prefix='messaging:')
+
+    async with live.mutation_lock:
+        entry, new, moved = await tracked_write(authority, rotate_and_move, ordered=True)
+    if not moved:
+        return entry, lambda: None
+    authority.sessions.setdefault(new.session_id, LiveSession(live.source, session_key))
+    authority._publish_pending(old)
+    authority._publish_pending(new)
+    return entry, partial(authority._schedule, new)
 
 
 async def admit_route_wake(runner, adapter, source, text, producer, metadata=None):

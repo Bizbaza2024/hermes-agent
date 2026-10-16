@@ -323,7 +323,7 @@ class GatewayTurnPersistenceMixin:
             logger.info("Auto-resetting session %s after compression exhaustion.", session_entry.session_id)
             from gateway.session_automation import move_route_wakes, reset_and_rehome_messages
             # Messages queued behind the exhausted turn still run, on the fresh session (unlike /new).
-            new_entry = await reset_and_rehome_messages(self, session_key, session_entry.session_id)
+            new_entry, run_moved = await reset_and_rehome_messages(self, session_key, session_entry.session_id)
             await move_route_wakes(self, session_key, session_entry.session_id)
             self._evict_cached_agent(session_key)
             # Conversation boundary: the funnel clears every conversation-scoped per-session dict.
@@ -343,6 +343,8 @@ class GatewayTurnPersistenceMixin:
                 await asyncio.to_thread(
                     self._sync_telegram_topic_binding, source, session_entry, reason="compression-exhausted-reset",
                 )
+            # Only now may the moved messages start: after eviction, scope clear and binding sync.
+            run_moved()
             response = (response or "") + t("gateway.session.auto_reset_context_exhausted")
         return response, session_entry
 
